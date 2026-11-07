@@ -58,12 +58,27 @@ La Reversal **se puede repetir** varias veces en la misma sesión cada vez que e
 | Parámetro | Defecto | Para qué sirve |
 |---|---|---|
 | `InpRiskPercent` | 1 % | Calcula el lote solo para que, si toca el SL, pierdas exactamente ese % del balance. |
+| `InpMaxRiskPctMinLot` | 100 % | En cuentas pequeñas el lote mínimo (0.01) puede arriesgar mucho más que `InpRiskPercent`. Con 100 opera igual; bájalo (ej. 10) para que no opere si el lote mínimo arriesga más de eso. |
 | `InpRR_POC` / `InpRR_Reversal` / `InpRR_Breakout` | 2 / 2 / 3 | Relación riesgo:beneficio de cada estrategia. |
 | `InpMaxTradesPerSession` | 3 | Máximo de operaciones por día. |
 | `InpMaxDailyLossPct` | 3 % | Si pierdes esto en el día, el robot deja de operar hasta la siguiente sesión. |
 | `InpMaxConsecLosses` | 2 | Tras 2 pérdidas seguidas, se detiene ese día. |
 | `InpUseBreakeven` / `InpBreakevenAtR` | sí / 1R | Cuando va ganando 1R, mueve el SL a la entrada (operación "sin riesgo"). |
 | `InpMaxSLATR` | 3 ATR | Ignora señales con stops demasiado grandes. |
+
+### Trailing stop
+
+Una vez que la operación avanza `InpTrailStartR` (1R por defecto), el stop empieza a seguir al precio. **Solo se mueve a favor, nunca hacia atrás.**
+
+| Modo (`InpTrailMode`) | Cómo mueve el stop | Ideal para |
+|---|---|---|
+| `TRAIL_OFF` | No hace trailing (solo breakeven si está activado) | Comparar en el backtest |
+| `TRAIL_ATR` (defecto) | Siempre a 1.5 ATR del precio (`InpTrailATRMult`) | Uso general |
+| `TRAIL_SWING` | Debajo del mínimo (compras) / encima del máximo (ventas) de las últimas 3 velas | Tendencias limpias |
+| `TRAIL_STEP` | Escalonado: al llegar a 2R asegura 1R, a 3R asegura 2R… | Asegurar ganancias por escalones |
+
+`InpTrailNoTP = true` quita el Take Profit y deja que **el trailing cierre la operación**: atrapa días de tendencia (como el 30 oct en oro, que cayó 150 USD) a cambio de devolver algo de ganancia en los días normales. Pruébalo contra el TP fijo en el backtest.
+
 | `InpMaxSpreadPoints` | 0 (off) | No entra si el spread está muy abierto (noticias, apertura). |
 
 ### ¿1:2 o 1:3? — Lo que dicen los números
@@ -121,7 +136,8 @@ El EA solo funciona mientras MT5 esté abierto y conectado. Opciones:
 - [x] **Paso 5** — Gestión de riesgo: lote por %, R:R, límites diarios, breakeven.
 - [ ] **Paso 6** — Compilar en MetaEditor y corregir errores (lo haces tú y me pasas el log).
 - [ ] **Paso 7** — Backtest + optimización + forward test; ajustar reglas según resultados.
-- [ ] **Paso 8** — Extras: filtro de noticias, trailing stop, alertas al celular (push notifications).
+- [x] **Paso 8a** — Trailing stop (ATR, swing, escalonado) y lote mínimo en cuentas pequeñas.
+- [ ] **Paso 8b** — Extras: filtro de noticias, alertas al celular (push notifications).
 - [ ] **Paso 9** — Demo → real pequeña → VPS.
 - [ ] **(Opcional)** Versión MT4 si tu broker solo ofrece MT4.
 

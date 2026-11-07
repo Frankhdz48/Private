@@ -12,10 +12,18 @@
 //|                   (BOS) a favor de la ruptura.                   |
 //+------------------------------------------------------------------+
 #property copyright "frankhdz48"
-#property version   "1.10"
+#property version   "1.20"
 #property description "POC Bounce + VA Reversal + VA Breakout (Volume Profile de la sesión anterior)"
 
 #include <Trade/Trade.mqh>
+
+enum ENUM_TRAIL_MODE
+  {
+   TRAIL_OFF   = 0,   // Sin trailing
+   TRAIL_ATR   = 1,   // Trailing por ATR (distancia fija en ATR)
+   TRAIL_SWING = 2,   // Trailing por swing (mínimo/máximo de las últimas N velas)
+   TRAIL_STEP  = 3    // Escalonado en R (asegura 1R al llegar a 2R, etc.)
+  };
 
 //--- Entradas -------------------------------------------------------
 input group "=== Estrategias ==="
@@ -48,6 +56,7 @@ input int    InpTradeEndHour        = 24;     // Operar hasta (hora servidor)
 
 input group "=== Gestión de riesgo ==="
 input double InpRiskPercent         = 1.0;    // Riesgo por operación (% del balance)
+input double InpMaxRiskPctMinLot    = 100.0;  // Si el lote mínimo arriesga más que InpRiskPercent, operarlo solo si arriesga <= X% (100 = siempre)
 input double InpRR_POC              = 2.0;    // Ratio R:R POC Bounce (la guía usa 2R)
 input double InpRR_Reversal         = 2.0;    // Ratio R:R VA Reversal (la guía usa 2R)
 input double InpRR_Breakout         = 3.0;    // Ratio R:R Breakout
@@ -56,6 +65,15 @@ input double InpMaxDailyLossPct     = 3.0;    // Pérdida máxima diaria (%) -> 
 input int    InpMaxConsecLosses     = 2;      // Pérdidas seguidas -> se detiene la sesión (0 = off)
 input bool   InpUseBreakeven        = true;   // Mover SL a breakeven
 input double InpBreakevenAtR        = 1.0;    // ...cuando el precio avanza X R
+input group "=== Trailing stop ==="
+input ENUM_TRAIL_MODE InpTrailMode  = TRAIL_ATR; // Tipo de trailing stop
+input double InpTrailStartR         = 1.0;    // Activar trailing cuando el precio avanza X R
+input double InpTrailATRMult        = 1.5;    // ATR: distancia del stop (x ATR)
+input int    InpTrailSwingBars      = 3;      // Swing: velas cerradas a mirar
+input double InpTrailStepR          = 1.0;    // Escalonado: cada X R de avance, sube el stop X R
+input bool   InpTrailNoTP           = false;  // Sin Take Profit: dejar que el trailing cierre la operación
+
+input group "=== Otros ==="
 input bool   InpCloseAtSessionEnd   = false;  // Cerrar posiciones al terminar la sesión
 input int    InpMaxSpreadPoints     = 0;      // Spread máximo en puntos (0 = sin filtro)
 input long   InpMagic               = 48001;  // Número mágico
@@ -134,8 +152,8 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
   {
-   if(InpUseBreakeven)
-      ManageBreakeven();
+   if(InpUseBreakeven || InpTrailMode != TRAIL_OFF)
+      ManagePositions();
 
    //--- Trabajamos solo al cierre de cada vela de la temporalidad de entrada
    datetime barTime = iTime(_Symbol, InpEntryTF, 0);
@@ -561,8 +579,19 @@ double CalcLots(double slDistance)
    double lossPerLot = slDistance / tickSize * tickValue;
    double lots = MathFloor(riskMoney / lossPerLot / volStep) * volStep;
 
-   if(lots < volMin)   // no arriesgar más de lo permitido: mejor no operar
-      return 0;
+   if(lots < volMin)
+     {
+      //--- El lote mínimo arriesga más de lo configurado: decidir con InpMaxRiskPctMinLot
+      double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+      double minLotRiskPct = (balance > 0) ? lossPerLot * volMin / balance * 100.0 : 1000.0;
+      if(minLotRiskPct > InpMaxRiskPctMinLot)
+        {
+         PrintFormat("Lote mínimo arriesga %.1f%% (> %.1f%% permitido), se ignora", minLotRiskPct, InpMaxRiskPctMinLot);
+         return 0;
+        }
+      PrintFormat("AVISO: usando lote mínimo %.2f, arriesga %.1f%% de la cuenta", volMin, minLotRiskPct);
+      lots = volMin;
+     }
    return MathMin(lots, volMax);
   }
 
@@ -596,17 +625,38 @@ void OpenTrade(ENUM_ORDER_TYPE type, double sl, double rr, double atr, string ta
       return;
      }
 
+   //--- ¿Alcanza el margen?
+   double margin = 0;
+   if(OrderCalcMargin(type, _Symbol, lots, price, margin) &&
+      margin > AccountInfoDouble(ACCOUNT_MARGIN_FREE))
+     {
+      PrintFormat("%s: margen insuficiente (necesita %.2f)", tag, margin);
+      return;
+     }
+
+   if(InpTrailNoTP && InpTrailMode != TRAIL_OFF)
+      tp = 0;
    sl = NormalizeDouble(sl, _Digits);
    tp = NormalizeDouble(tp, _Digits);
    bool ok = (type == ORDER_TYPE_BUY) ? g_trade.Buy(lots, _Symbol, 0, sl, tp, tag)
                                       : g_trade.Sell(lots, _Symbol, 0, sl, tp, tag);
+   //--- Guardar el riesgo inicial (1R) para breakeven/trailing, sobrevive a reinicios
+   if(ok && g_trade.ResultOrder() > 0)
+      GlobalVariableSet(RiskKey(g_trade.ResultOrder()), risk);
    PrintFormat("%s %s lots=%.2f SL=%.5f TP=%.5f -> %s (%u)",
                tag, (type == ORDER_TYPE_BUY ? "BUY" : "SELL"), lots, sl, tp,
                ok ? "OK" : "ERROR", g_trade.ResultRetcode());
   }
 
-void ManageBreakeven()
+string RiskKey(ulong positionId)
   {
+   return StringFormat("VPEA_R_%I64d_%I64u", InpMagic, positionId);
+  }
+
+//--- Breakeven + trailing stop. El stop solo se mueve a favor, nunca en contra.
+void ManagePositions()
+  {
+   double atr = 0;
    for(int i = PositionsTotal() - 1; i >= 0; i--)
      {
       ulong tk = PositionGetTicket(i);
@@ -614,25 +664,86 @@ void ManageBreakeven()
       if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
       if(PositionGetInteger(POSITION_MAGIC) != InpMagic) continue;
 
-      double open = PositionGetDouble(POSITION_PRICE_OPEN);
-      double sl   = PositionGetDouble(POSITION_SL);
-      double tp   = PositionGetDouble(POSITION_TP);
-      long   type = PositionGetInteger(POSITION_TYPE);
+      double open  = PositionGetDouble(POSITION_PRICE_OPEN);
+      double sl    = PositionGetDouble(POSITION_SL);
+      double tp    = PositionGetDouble(POSITION_TP);
+      bool   isBuy = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY;
+      ulong  posId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
       if(sl == 0) continue;
 
-      if(type == POSITION_TYPE_BUY && sl < open)
+      //--- Riesgo inicial (1R)
+      double R = 0;
+      string key = RiskKey(posId);
+      if(GlobalVariableCheck(key))
+         R = GlobalVariableGet(key);
+      else if((isBuy && sl < open) || (!isBuy && sl > open))
         {
-         double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-         if(bid - open >= InpBreakevenAtR * (open - sl))
-            g_trade.PositionModify(tk, NormalizeDouble(open, _Digits), tp);
+         R = MathAbs(open - sl);
+         GlobalVariableSet(key, R);
         }
-      else if(type == POSITION_TYPE_SELL && sl > open)
+      if(R <= 0) continue;
+
+      double price  = isBuy ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      double profit = isBuy ? price - open : open - price;   // avance a favor
+      double newSL  = sl;
+
+      //--- Breakeven
+      if(InpUseBreakeven && profit >= InpBreakevenAtR * R)
+         newSL = Better(isBuy, newSL, open);
+
+      //--- Trailing
+      if(InpTrailMode != TRAIL_OFF && profit >= InpTrailStartR * R)
         {
-         double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-         if(open - ask >= InpBreakevenAtR * (sl - open))
-            g_trade.PositionModify(tk, NormalizeDouble(open, _Digits), tp);
+         double cand = 0;
+         if(InpTrailMode == TRAIL_ATR)
+           {
+            if(atr <= 0) atr = GetATR();
+            if(atr > 0)
+               cand = isBuy ? price - InpTrailATRMult * atr : price + InpTrailATRMult * atr;
+           }
+         else if(InpTrailMode == TRAIL_SWING)
+           {
+            if(atr <= 0) atr = GetATR();
+            double buffer = InpSLBufferATR * atr;
+            int n = MathMax(1, InpTrailSwingBars);
+            if(isBuy)
+              {
+               int idx = iLowest(_Symbol, InpEntryTF, MODE_LOW, n, 1);
+               if(idx >= 0) cand = iLow(_Symbol, InpEntryTF, idx) - buffer;
+              }
+            else
+              {
+               int idx = iHighest(_Symbol, InpEntryTF, MODE_HIGH, n, 1);
+               if(idx >= 0) cand = iHigh(_Symbol, InpEntryTF, idx) + buffer;
+              }
+           }
+         else if(InpTrailMode == TRAIL_STEP && InpTrailStepR > 0)
+           {
+            //--- Al llegar a (k+1)·step R, asegura k·step R
+            int k = (int)MathFloor(profit / (InpTrailStepR * R)) - 1;
+            if(k >= 0)
+               cand = isBuy ? open + k * InpTrailStepR * R : open - k * InpTrailStepR * R;
+           }
+         if(cand > 0)
+            newSL = Better(isBuy, newSL, cand);
         }
+
+      //--- Respetar distancia mínima del broker y modificar solo si mejora
+      double minDist = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * _Point;
+      if(isBuy  && newSL > price - minDist) newSL = price - minDist;
+      if(!isBuy && newSL < price + minDist) newSL = price + minDist;
+      newSL = NormalizeDouble(newSL, _Digits);
+
+      bool improves = isBuy ? newSL > sl + _Point : newSL < sl - _Point;
+      if(improves)
+         g_trade.PositionModify(tk, newSL, tp);
      }
+  }
+
+//--- Devuelve el stop más favorable (más alto en compras, más bajo en ventas)
+double Better(bool isBuy, double a, double b)
+  {
+   return isBuy ? MathMax(a, b) : MathMin(a, b);
   }
 
 //+------------------------------------------------------------------+
