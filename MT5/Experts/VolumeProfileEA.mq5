@@ -29,9 +29,9 @@ enum ENUM_TRAIL_MODE
 
 enum ENUM_BO_PULLBACK
   {
-   PB_VA_ZONE = 0,    // Pullback solo cerca del VAH/VAL (estricto, como la guía)
+   PB_VA_ZONE = 0,    // Pullback solo cerca del VAH/VAL (como la guía, defecto)
    PB_IMPULSE = 1,    // Pullback = retroceso del % del impulso de ruptura
-   PB_EITHER  = 2     // Cualquiera de los dos (recomendado)
+   PB_EITHER  = 2     // Cualquiera de los dos
   };
 
 enum ENUM_BO_OPEN_OUTSIDE
@@ -85,7 +85,7 @@ input int    InpRevMaxPerSide       = 1;      // Máx. reversals por lado del VA
 input double InpRR_Reversal         = 2.0;    // R:R (guía: 2R)
 
 input group "=== #3 Breakout ==="
-input ENUM_BO_PULLBACK InpBOPullbackMode = PB_EITHER; // Qué cuenta como pullback
+input ENUM_BO_PULLBACK InpBOPullbackMode = PB_VA_ZONE; // Qué cuenta como pullback (guía: solo cerca del VA)
 input double InpBOPullbackATR       = 0.50;   // Zona VA: distancia al VAH/VAL (x ATR)
 input double InpBORetracePct        = 38.2;   // Impulso: % mínimo de retroceso
 input double InpBOMinImpulseATR     = 1.0;    // Impulso: tamaño mínimo de la ruptura (x ATR)

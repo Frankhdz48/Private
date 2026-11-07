@@ -52,9 +52,9 @@ Dibuja las últimas 5 sesiones (`InpDrawSessions`) para que lo compares contra T
 3. **Una sola posición a la vez** por símbolo.
 
 ### Breakout: qué cuenta como pullback (`InpBOPullbackMode`)
-- **Zona VA**: el precio regresa a 0.5 ATR del VAH/VAL (estricto, como la guía). Menos operaciones; se pierde los días de tendencia fuerte.
+- **Zona VA** (defecto): el precio regresa a 0.5 ATR del VAH/VAL, como dice la guía. Menos operaciones; se pierde los días de tendencia fuerte.
 - **Impulso**: el precio retrocede al menos 38.2 % del movimiento de ruptura (que debe medir ≥ 1 ATR).
-- **Cualquiera** (defecto): vale cualquiera de las dos.
+- **Cualquiera**: vale cualquiera de las dos.
 
 ### Breakout cuando la sesión abre ya fuera del VA (`InpBOOpenOutside`)
 - **Ignorar**: solo cuenta una ruptura real (una vela que venía de adentro y cierra afuera).
@@ -180,7 +180,7 @@ El EA solo funciona mientras MT5 esté abierto y conectado. Opciones:
 - [x] Trailing stop (ATR, swing, escalonado) y opción sin TP
 
 - [x] Volume Profile calculado y **dibujado** por el EA (histograma + POC/VAH/VAL, últimas 5 sesiones)
-- [x] Breakout: pullback por zona VA o por retroceso del impulso
+- [x] Breakout: pullback solo cerca del VA (como la guía); retroceso del impulso disponible como opción
 - [x] Breakout: manejo de sesiones que abren fuera del VA (retest obligatorio)
 - [x] Máx. 1 Reversal por lado del VA por sesión
 - [x] Cierre parcial (50 % en 2R, resto con trailing)
@@ -188,7 +188,6 @@ El EA solo funciona mientras MT5 esté abierto y conectado. Opciones:
 - [x] Filtro de noticias (calendario MT5)
 
 ### 🔧 Mejoras al código (pendientes)
-- [ ] **Alertas al celular** (notificaciones push de MT5 al abrir/cerrar)
 - [ ] **Versión MT4** (si tu broker solo ofrece MT4)
 
 ### 🧪 Pruebas (las haces tú, yo te ayudo a leer resultados)
