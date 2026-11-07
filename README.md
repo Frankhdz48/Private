@@ -126,20 +126,41 @@ El EA solo funciona mientras MT5 esté abierto y conectado. Opciones:
 
 ---
 
-## Plan / hoja de ruta
+## Checklist del proyecto
 
-- [x] **Paso 1** — Traducir las reglas de las imágenes a reglas exactas y medibles.
-- [x] **Paso 2** — Cálculo del Volume Profile (POC, VAH, VAL) de la sesión anterior.
-- [x] **Paso 3** — Estrategia #1 POC Bounce.
-- [x] **Paso 4** — Estrategia #3 Breakout (ruptura → pullback → BOS).
-- [x] **Paso 4b** — Estrategia #2 Value Area Reversal + las 3 como un solo sistema.
-- [x] **Paso 5** — Gestión de riesgo: lote por %, R:R, límites diarios, breakeven.
-- [ ] **Paso 6** — Compilar en MetaEditor y corregir errores (lo haces tú y me pasas el log).
-- [ ] **Paso 7** — Backtest + optimización + forward test; ajustar reglas según resultados.
-- [x] **Paso 8a** — Trailing stop (ATR, swing, escalonado) y lote mínimo en cuentas pequeñas.
-- [ ] **Paso 8b** — Extras: filtro de noticias, alertas al celular (push notifications).
-- [ ] **Paso 9** — Demo → real pequeña → VPS.
-- [ ] **(Opcional)** Versión MT4 si tu broker solo ofrece MT4.
+### ✅ Hecho
+- [x] Reglas de la guía traducidas a reglas exactas y medibles
+- [x] Volume Profile de la sesión anterior (POC, VAH, VAL, 60 filas, 70 %)
+- [x] Estrategia #1 POC Bounce
+- [x] Estrategia #2 Value Area Reversal
+- [x] Estrategia #3 Breakout (ruptura → pullback → BOS)
+- [x] Las 3 como un solo sistema (cada una según cómo cerró la sesión anterior)
+- [x] Riesgo: lote por %, R:R, límites diarios, pérdidas seguidas, breakeven
+- [x] Lote mínimo en cuentas pequeñas (`InpMaxRiskPctMinLot`) + revisión de margen
+- [x] Trailing stop (ATR, swing, escalonado) y opción sin TP
+
+### 🔧 Mejoras al código (pendientes)
+- [ ] **Breakout con retroceso del impulso**: aceptar pullback de 38–50 % del movimiento de ruptura (los días 4 y 5 nov se perdieron)
+- [ ] **Apertura fuera del VA**: opción para que abrir ya fuera del VA cuente o no como ruptura
+- [ ] **Máx. 1 Reversal por lado del VA por sesión** (evitar señales repetidas cuando el precio ronda el VAH/VAL)
+- [ ] **Cierre parcial**: cerrar 50 % en 2R y dejar el resto con trailing (requiere ≥ 0.02 lotes)
+- [ ] **Detección de día de tendencia** (distancia al VA, fuerza de ruptura, ADX) — solo si el backtest lo justifica
+- [ ] **Alertas al celular** (notificaciones push de MT5 al abrir/cerrar)
+- [ ] **Filtro de noticias** (no operar cerca de NFP, CPI, FOMC)
+- [ ] **Versión MT4** (si tu broker solo ofrece MT4)
+
+### 🧪 Pruebas (las haces tú, yo te ayudo a leer resultados)
+- [ ] Compilar en MetaEditor (F7) y pasarme los errores
+- [ ] Comparar las líneas POC/VAH/VAL del robot con TradingView en los mismos días
+- [ ] Backtest XAUUSD 2+ años, "cada tick basado en ticks reales"
+- [ ] Comparar variantes: TP fijo vs sin TP vs parcial; Breakout 2R vs 3R; cada estrategia por separado
+- [ ] Optimizar pocos parámetros y validar en datos no usados (forward test)
+
+### 🚀 Puesta en marcha
+- [ ] Cuenta demo XM con el mismo saldo que usarás en real, 4–8 semanas
+- [ ] Cuenta real pequeña
+- [ ] VPS para que corra 24/7
+- [ ] Revisión semanal del diario del robot
 
 ---
 
