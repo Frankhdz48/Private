@@ -4,26 +4,30 @@
 //|   #1 POC Bounce : la sesión anterior cerró fuera del Value Area, |
 //|                   el precio vuelve al POC y lo rechaza con una   |
 //|                   vela envolvente (engulfing).                   |
+//|   #2 VA Reversal: la sesión anterior cerró DENTRO del VA, el     |
+//|                   precio sale del VA y una vela CIERRA de vuelta |
+//|                   adentro -> entrada a favor de la reversión.    |
 //|   #3 Breakout   : el precio rompe VAH/VAL, hace pullback al VA   |
 //|                   sin meterse demasiado y luego rompe estructura |
 //|                   (BOS) a favor de la ruptura.                   |
 //+------------------------------------------------------------------+
 #property copyright "frankhdz48"
-#property version   "1.00"
-#property description "POC Bounce + Value Area Breakout (Volume Profile de la sesión anterior)"
+#property version   "1.10"
+#property description "POC Bounce + VA Reversal + VA Breakout (Volume Profile de la sesión anterior)"
 
 #include <Trade/Trade.mqh>
 
 //--- Entradas -------------------------------------------------------
 input group "=== Estrategias ==="
 input bool   InpUsePOCBounce        = true;   // Activar Estrategia #1 POC Bounce
+input bool   InpUseReversal         = true;   // Activar Estrategia #2 Value Area Reversal
 input bool   InpUseBreakout         = true;   // Activar Estrategia #3 Breakout
 
 input group "=== Sesión / Volume Profile ==="
 input int    InpSessionStartHour    = 0;      // Hora de inicio de sesión (hora del SERVIDOR)
 input int    InpSessionStartMinute  = 0;      // Minuto de inicio de sesión
 input ENUM_TIMEFRAMES InpProfileTF  = PERIOD_M1; // Temporalidad para construir el perfil
-input int    InpProfileBins         = 120;    // Número de filas (niveles) del perfil
+input int    InpProfileBins         = 60;     // Número de filas del perfil (Row Size de la guía = 60)
 input double InpValueAreaPct        = 70.0;   // % de volumen del Value Area
 input bool   InpUseRealVolume       = false;  // Usar volumen real (futuros) en vez de tick volume
 input int    InpMinSessionBars      = 60;     // Mínimo de velas para considerar una sesión válida
@@ -33,7 +37,8 @@ input ENUM_TIMEFRAMES InpEntryTF    = PERIOD_M15; // Temporalidad de entrada
 input int    InpATRPeriod           = 14;     // Periodo ATR (para tolerancias)
 input double InpPOCTouchATR         = 0.25;   // POC: tolerancia de "toque" (x ATR)
 input double InpPOCMaxPierceATR     = 0.50;   // POC: máximo que puede perforar el POC (x ATR)
-input bool   InpPOCAllowPinBar      = false;  // POC: aceptar también pin bar como rechazo
+input bool   InpPOCAllowPinBar      = true;   // POC: aceptar también pin bar como rechazo
+input bool   InpRevRequireCloseOutside = true; // Reversal: exigir una vela CERRADA fuera del VA antes de volver
 input double InpBOPullbackATR       = 0.50;   // Breakout: distancia al VA que cuenta como pullback (x ATR)
 input double InpBOMaxDepthPct       = 30.0;   // Breakout: % máximo del VA que puede volver a entrar
 input double InpSLBufferATR         = 0.20;   // Colchón del Stop Loss (x ATR)
@@ -44,8 +49,9 @@ input int    InpTradeEndHour        = 24;     // Operar hasta (hora servidor)
 input group "=== Gestión de riesgo ==="
 input double InpRiskPercent         = 1.0;    // Riesgo por operación (% del balance)
 input double InpRR_POC              = 2.0;    // Ratio R:R POC Bounce (la guía usa 2R)
+input double InpRR_Reversal         = 2.0;    // Ratio R:R VA Reversal (la guía usa 2R)
 input double InpRR_Breakout         = 3.0;    // Ratio R:R Breakout
-input int    InpMaxTradesPerSession = 2;      // Máx. operaciones por sesión
+input int    InpMaxTradesPerSession = 3;      // Máx. operaciones por sesión
 input double InpMaxDailyLossPct     = 3.0;    // Pérdida máxima diaria (%) -> se detiene
 input int    InpMaxConsecLosses     = 2;      // Pérdidas seguidas -> se detiene la sesión (0 = off)
 input bool   InpUseBreakeven        = true;   // Mover SL a breakeven
@@ -77,6 +83,13 @@ struct BreakoutState
    double            pullbackExt; // mínimo (alcista) / máximo (bajista) del pullback
   };
 
+// Estado de la Estrategia #2 (una por lado del VA)
+struct ReversalState
+  {
+   bool              armed;       // el precio está fuera del VA esperando volver
+   double            extreme;     // swing más extremo fuera del VA (para el SL)
+  };
+
 //--- Globales -------------------------------------------------------
 CTrade         g_trade;
 int            g_atrHandle = INVALID_HANDLE;
@@ -84,6 +97,7 @@ datetime       g_lastBarTime = 0;
 datetime       g_sessionStart = 0;
 Profile        g_prof;
 BreakoutState  g_boBull, g_boBear;
+ReversalState  g_revAbove, g_revBelow;
 bool           g_pocDone = false;
 
 //+------------------------------------------------------------------+
@@ -165,8 +179,17 @@ void OnTick()
    //--- Las máquinas de estado se actualizan siempre; la entrada solo si se permite
    bool canTrade = CanOpenTrade();
 
+   //--- Sistema completo: cada estrategia tiene su propio contexto
+   //    POC Bounce -> sesión anterior cerró FUERA del VA
+   //    Reversal   -> sesión anterior cerró DENTRO del VA
+   //    Breakout   -> cualquier caso
+   if(InpUseReversal)
+      ProcessReversal(b[0], atr, canTrade);
+   canTrade = canTrade && !HasOpenPosition();
+
    if(InpUseBreakout)
       ProcessBreakout(b[0], atr, canTrade);
+   canTrade = canTrade && !HasOpenPosition();
 
    if(InpUsePOCBounce && !g_pocDone && b[1].time >= curStart)
       ProcessPOCBounce(b[0], b[1], atr, canTrade);
@@ -327,6 +350,75 @@ bool IsBearPin(const MqlRates &c)
    double body = MathAbs(c.close - c.open);
    double upperWick = c.high - MathMax(c.open, c.close);
    return upperWick >= 2.0 * body && MathMax(c.open, c.close) <= c.high - range * 0.6;
+  }
+
+//+------------------------------------------------------------------+
+//| Estrategia #2: Value Area Reversal                               |
+//| Puede repetirse en la sesión cada vez que el precio sale y       |
+//| vuelve a cerrar dentro del VA (limitado por InpMaxTradesPerSession)|
+//+------------------------------------------------------------------+
+void ProcessReversal(const MqlRates &c, double atr, bool canTrade)
+  {
+   if(g_prof.close > g_prof.vah || g_prof.close < g_prof.val)
+      return;   // solo válido si la sesión anterior cerró DENTRO del VA
+
+   double vah = g_prof.vah, val = g_prof.val;
+   double buffer = InpSLBufferATR * atr;
+   bool closedInside = c.close < vah && c.close > val;   // cierre de vela, no mecha
+
+   //--- Excursión por ARRIBA del VAH -> venta al volver a cerrar dentro
+   if(!g_revAbove.armed)
+     {
+      if(c.high > vah)
+        {
+         if(c.close > vah)
+           { g_revAbove.armed = true; g_revAbove.extreme = c.high; }
+         else if(!InpRevRequireCloseOutside && closedInside && canTrade)
+           {
+            OpenTrade(ORDER_TYPE_SELL, c.high + buffer, InpRR_Reversal, atr, "VA_Reversal");
+            canTrade = false;
+           }
+        }
+     }
+   else
+     {
+      g_revAbove.extreme = MathMax(g_revAbove.extreme, c.high);
+      if(closedInside)
+        {
+         g_revAbove.armed = false;
+         if(canTrade)
+           {
+            OpenTrade(ORDER_TYPE_SELL, g_revAbove.extreme + buffer, InpRR_Reversal, atr, "VA_Reversal");
+            canTrade = false;
+           }
+        }
+      else if(c.close < val)          // atravesó todo el VA: ya no es esta reversión
+         g_revAbove.armed = false;
+     }
+
+   //--- Excursión por DEBAJO del VAL -> compra al volver a cerrar dentro
+   if(!g_revBelow.armed)
+     {
+      if(c.low < val)
+        {
+         if(c.close < val)
+           { g_revBelow.armed = true; g_revBelow.extreme = c.low; }
+         else if(!InpRevRequireCloseOutside && closedInside && canTrade)
+            OpenTrade(ORDER_TYPE_BUY, c.low - buffer, InpRR_Reversal, atr, "VA_Reversal");
+        }
+     }
+   else
+     {
+      g_revBelow.extreme = MathMin(g_revBelow.extreme, c.low);
+      if(closedInside)
+        {
+         g_revBelow.armed = false;
+         if(canTrade)
+            OpenTrade(ORDER_TYPE_BUY, g_revBelow.extreme - buffer, InpRR_Reversal, atr, "VA_Reversal");
+        }
+      else if(c.close > vah)
+         g_revBelow.armed = false;
+     }
   }
 
 //+------------------------------------------------------------------+
@@ -583,6 +675,8 @@ void ResetStates()
   {
    g_boBull.stage = BO_WAIT; g_boBull.extreme = 0; g_boBull.pullbackExt = 0;
    g_boBear.stage = BO_WAIT; g_boBear.extreme = 0; g_boBear.pullbackExt = 0;
+   g_revAbove.armed = false; g_revAbove.extreme = 0;
+   g_revBelow.armed = false; g_revBelow.extreme = 0;
    g_pocDone = false;
   }
 
