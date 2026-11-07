@@ -22,20 +22,56 @@ Igual que el *Fixed Range Volume Profile* de TradingView puesto sobre **toda la 
 |---|---|---|---|---|---|---|
 | 1 | **POC Bounce** | **FUERA** del VA | El precio regresa al POC | Vela de rechazo en el POC (envolvente o pin bar) a favor del rebote | Un poco más allá del POC / mecha | 2R |
 | 2 | **VA Reversal** | **DENTRO** del VA | El precio sale arriba del VAH o abajo del VAL | Una vela **cierra** de vuelta dentro del VA (las mechas no cuentan) | Detrás del swing que hizo fuera | 2R |
-| 3 | **Breakout** | Da igual | El precio rompe VAH/VAL, hace pullback sin meterse mucho y aguanta | Break of Structure: nuevo máximo (alcista) / nuevo mínimo (bajista) | Detrás del pullback | 3R* |
+| 3 | **Breakout** | Da igual | El precio rompe VAH/VAL, hace pullback sin meterse mucho y aguanta | Break of Structure: nuevo máximo (alcista) / nuevo mínimo (bajista) | Detrás del pullback | 2R* |
 
-\* La guía no da objetivo para el Breakout; uso 3R porque las rupturas que continúan suelen recorrer más. Se ajusta en el backtest.
+\* La guía no da objetivo para el Breakout. En los días revisados de oro 2R funcionó mejor que 3R; se ajusta en el backtest.
 
-La Reversal **se puede repetir** varias veces en la misma sesión cada vez que el precio sale y vuelve a cerrar dentro (limitado por `InpMaxTradesPerSession`).
+La guía permite repetir la Reversal en la misma sesión; el robot la limita a **1 por lado del VA por sesión** (`InpRevMaxPerSide`) para evitar señales repetidas cuando el precio da vueltas en el VAH/VAL.
 
 ---
 
 ## Cómo funciona por dentro
 
-1. **Sesión**: cada día empieza a la hora `InpSessionStartHour` (hora del **servidor** del broker). Los fines de semana se saltan automáticamente.
-2. **Volume Profile**: al iniciar cada sesión toma las velas M1 de la sesión anterior, reparte el volumen de cada vela entre su máximo y su mínimo en 60 filas y calcula POC, VAH y VAL. Dibuja las líneas en el gráfico.
-3. **Cada vela cerrada de M15** (`InpEntryTF`) revisa las tres estrategias.
-4. **Una sola posición a la vez** por símbolo.
+### El Volume Profile lo calcula y lo dibuja el robot (no hace falta TradingView)
+Al empezar cada sesión, el EA hace lo mismo que la guía hace a mano con el *Fixed Range Volume Profile*:
+
+| Paso de la guía | Lo que hace el EA |
+|---|---|
+| Usar temporalidad intradía | Construye el perfil con velas de **1 minuto** (máxima precisión) y opera en **M15** |
+| Poner el FRVP sobre toda la sesión de ayer | Toma todas las velas M1 de la sesión anterior (salta fines de semana) |
+| Row Size 60 | Divide el rango de ayer en **60 filas** y reparte el volumen de cada vela entre su máximo y mínimo |
+| Value Area 70 % | Desde el POC suma filas hacia el lado con más volumen hasta juntar el **70 %** |
+| VAH, VAL y POC visibles, POC en rojo | Dibuja el **histograma** (azul = dentro del VA, gris = fuera, rojo = POC) y las líneas POC/VAH/VAL |
+| Extender los niveles al día actual | Las líneas se extienden a la sesión siguiente, que es donde se usan |
+
+Dibuja las últimas 5 sesiones (`InpDrawSessions`) para que lo compares contra TradingView.
+
+### Funcionamiento
+1. **Sesión**: cada día empieza a la hora `InpSessionStartHour` (hora del **servidor** del broker).
+2. **Cada vela cerrada de M15** (`InpEntryTF`) revisa las tres estrategias, la detección de tendencia y los filtros.
+3. **Una sola posición a la vez** por símbolo.
+
+### Breakout: qué cuenta como pullback (`InpBOPullbackMode`)
+- **Zona VA**: el precio regresa a 0.5 ATR del VAH/VAL (estricto, como la guía). Menos operaciones; se pierde los días de tendencia fuerte.
+- **Impulso**: el precio retrocede al menos 38.2 % del movimiento de ruptura (que debe medir ≥ 1 ATR).
+- **Cualquiera** (defecto): vale cualquiera de las dos.
+
+### Breakout cuando la sesión abre ya fuera del VA (`InpBOOpenOutside`)
+- **Ignorar**: solo cuenta una ruptura real (una vela que venía de adentro y cierra afuera).
+- **Exigir retest** (defecto): cuenta, pero el pullback tiene que volver al borde del VA (VAH/VAL), como el 6 nov.
+- **Normal**: cuenta como cualquier ruptura.
+
+### Día de tendencia
+Tres señales medibles, se necesitan 2 (`InpTrendMinScore`):
+1. El precio cierra a más de **2 ATR** fuera del VA.
+2. **ADX ≥ 25** con el DI a favor.
+3. El VA de ayer fue **angosto** (< 0.5 × ATR diario): compresión antes de expansión.
+
+Cuando se detecta: **bloquea entradas en contra** (`InpTrendBlockCounter`) y las entradas **a favor van sin TP** con trailing (`InpTrendRunner`). Termina cuando una vela cierra de vuelta dentro del VA.
+
+### Filtro de noticias
+Usa el **calendario económico integrado de MT5**: no abre operaciones 30 min antes ni 30 min después de noticias de **alto impacto** del USD (y XAU). Las posiciones abiertas no se tocan.
+> ⚠️ El calendario **no funciona en el Probador de Estrategias**: en el backtest el filtro queda apagado; solo actúa en demo/real.
 
 ### Cómo traduje lo "a ojo" de la guía a reglas exactas
 
@@ -59,12 +95,16 @@ La Reversal **se puede repetir** varias veces en la misma sesión cada vez que e
 |---|---|---|
 | `InpRiskPercent` | 1 % | Calcula el lote solo para que, si toca el SL, pierdas exactamente ese % del balance. |
 | `InpMaxRiskPctMinLot` | 100 % | En cuentas pequeñas el lote mínimo (0.01) puede arriesgar mucho más que `InpRiskPercent`. Con 100 opera igual; bájalo (ej. 10) para que no opere si el lote mínimo arriesga más de eso. |
-| `InpRR_POC` / `InpRR_Reversal` / `InpRR_Breakout` | 2 / 2 / 3 | Relación riesgo:beneficio de cada estrategia. |
+| `InpRR_POC` / `InpRR_Reversal` / `InpRR_Breakout` | 2 / 2 / 2 | Relación riesgo:beneficio de cada estrategia. |
 | `InpMaxTradesPerSession` | 3 | Máximo de operaciones por día. |
 | `InpMaxDailyLossPct` | 3 % | Si pierdes esto en el día, el robot deja de operar hasta la siguiente sesión. |
 | `InpMaxConsecLosses` | 2 | Tras 2 pérdidas seguidas, se detiene ese día. |
 | `InpUseBreakeven` / `InpBreakevenAtR` | sí / 1R | Cuando va ganando 1R, mueve el SL a la entrada (operación "sin riesgo"). |
 | `InpMaxSLATR` | 3 ATR | Ignora señales con stops demasiado grandes. |
+
+### Cierre parcial
+Con `InpUsePartial` activo, al llegar a **2R** cierra el **50 %** y el resto sigue con el stop en breakeven y trailing, sin TP (`InpRunnerTP_R = 0`).
+Si el lote no se puede partir (con 0.01 lote, p. ej. cuentas de 50 USD) la operación se maneja normal, con su TP.
 
 ### Trailing stop
 
@@ -139,14 +179,16 @@ El EA solo funciona mientras MT5 esté abierto y conectado. Opciones:
 - [x] Lote mínimo en cuentas pequeñas (`InpMaxRiskPctMinLot`) + revisión de margen
 - [x] Trailing stop (ATR, swing, escalonado) y opción sin TP
 
+- [x] Volume Profile calculado y **dibujado** por el EA (histograma + POC/VAH/VAL, últimas 5 sesiones)
+- [x] Breakout: pullback por zona VA o por retroceso del impulso
+- [x] Breakout: manejo de sesiones que abren fuera del VA (retest obligatorio)
+- [x] Máx. 1 Reversal por lado del VA por sesión
+- [x] Cierre parcial (50 % en 2R, resto con trailing)
+- [x] Detección de día de tendencia (distancia al VA, ADX, VA angosto)
+- [x] Filtro de noticias (calendario MT5)
+
 ### 🔧 Mejoras al código (pendientes)
-- [ ] **Breakout con retroceso del impulso**: aceptar pullback de 38–50 % del movimiento de ruptura (los días 4 y 5 nov se perdieron)
-- [ ] **Apertura fuera del VA**: opción para que abrir ya fuera del VA cuente o no como ruptura
-- [ ] **Máx. 1 Reversal por lado del VA por sesión** (evitar señales repetidas cuando el precio ronda el VAH/VAL)
-- [ ] **Cierre parcial**: cerrar 50 % en 2R y dejar el resto con trailing (requiere ≥ 0.02 lotes)
-- [ ] **Detección de día de tendencia** (distancia al VA, fuerza de ruptura, ADX) — solo si el backtest lo justifica
 - [ ] **Alertas al celular** (notificaciones push de MT5 al abrir/cerrar)
-- [ ] **Filtro de noticias** (no operar cerca de NFP, CPI, FOMC)
 - [ ] **Versión MT4** (si tu broker solo ofrece MT4)
 
 ### 🧪 Pruebas (las haces tú, yo te ayudo a leer resultados)
