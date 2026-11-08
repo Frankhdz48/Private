@@ -139,6 +139,22 @@ Pero **más R:R = menos aciertos**, porque el precio tiene que viajar más lejos
 
 ---
 
+## Backtest gratis en TradingView (Pine Script)
+
+Archivo: [`TradingView/VolumeProfileSystem.pine`](TradingView/VolumeProfileSystem.pine) — mismas reglas que el EA, para probar sin computadora.
+
+1. Abre **tradingview.com** en el navegador (en la tablet funciona mejor en el navegador que en la app) y un gráfico de **XAUUSD en 30m** (o 15m / 1h).
+2. Abajo abre **Pine Editor**, borra lo que haya y pega todo el contenido del archivo `.pine`.
+3. Clic en **Guardar** y luego **Añadir al gráfico**.
+4. Abajo abre **Probador de estrategias** → "Resumen" y "Lista de operaciones".
+
+Notas:
+- Ya viene configurado como tu cuenta: 50 USD, apalancamiento 1:1000 (margen 0.1 %), tamaño mínimo 1 oz (= 0.01 lote en XM), comisión 0.18 USD por onza por lado para simular el spread.
+- "Velas para el perfil" debe ser **menor** que la temporalidad del gráfico (5m con gráfico de 30m).
+- TradingView gratis da pocos meses de historial; el plan de pago da más. Más historial = backtest más confiable.
+- El **filtro de noticias no existe** en la versión de TradingView.
+- Los datos son de Capital.com/OANDA, no de XM: puede haber pequeñas diferencias de precio y volumen.
+
 ## Instalación
 
 1. Abre MetaTrader 5 → **Archivo → Abrir carpeta de datos**.
@@ -186,6 +202,7 @@ El EA solo funciona mientras MT5 esté abierto y conectado. Opciones:
 - [x] Cierre parcial (50 % en 2R, resto con trailing)
 - [x] Detección de día de tendencia (distancia al VA, ADX, VA angosto)
 - [x] Filtro de noticias (calendario MT5)
+- [x] Versión Pine Script para backtest gratis en TradingView
 
 ### 🔧 Mejoras al código (pendientes)
 - [ ] **Versión MT4** (si tu broker solo ofrece MT4)
